@@ -5,31 +5,40 @@ import time
 import math
 
 world = [ #y,x
-    [1,1,1,1,1,1,1,1],
-    [1,0,0,0,0,0,0,1],
-    [1,0,1,0,1,0,0,1],
-    [1,0,1,0,1,0,0,1],
-    [1,0,0,0,1,0,0,1],
-    [1,1,1,1,1,0,0,1],
-    [1,0,0,0,0,0,0,1],
-    [1,1,1,1,1,1,1,1]
+    [2,2,1,2,1,2,1,1],
+    [2,0,0,0,0,0,0,1],
+    [1,0,2,0,1,0,0,2],
+    [2,0,0,0,2,0,0,1],
+    [1,0,0,0,1,0,0,2],
+    [1,1,2,1,1,0,0,1],
+    [1,0,0,0,0,0,0,2],
+    [1,1,2,1,2,1,2,2]
 ]
+
+colors = [(128, 128, 128),
+        (140, 140, 140)]
 
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+class Sprite():
+    def __init__(self, position, height, width):
+        self.position = position
+        self.height = height
+        self.width = width
 
 class Player():
     def __init__(self):
         self.position = [5, 1]
         self.viewangle = 0 #0 to 360
         self.fov = 70
-        self.rays = 90
+        self.rays = 180
         self.draw_distance = 8
-        self.line_resolution = 20
+        self.line_resolution = 25
         
         self.speed = 0.02
         
-    def move(self, keys):
+    def move(self, world, keys):
         dx = 0
         dy = 0
     
@@ -53,10 +62,14 @@ class Player():
         elif world[round(self.position[1])][round(dx)] == 0:
             self.position[0] = dx
             
-    def raycast(self, world, surface):
-        boxwidth = surface.get_width()/self.rays + 1
+    def raycast(self, world, surface, colors, sprites):
+        w = surface.get_width()
+        h = surface.get_height()
+    
+        boxwidth = w/self.rays + 1
         angle = self.fov/self.rays
         
+        zbuffer = []
         for i in range(self.rays + 1):
             #generate ray angle vectors
             x = math.sin(math.radians(self.viewangle - (self.fov / 2) + (i * angle)))
@@ -68,13 +81,32 @@ class Player():
                 xindex = self.position[0] + (j/self.line_resolution * x)
                 
                 if (0 <= round(yindex) < len(world) and 0 <= round(xindex) < len(world[0])):
-                    if (world[round(yindex)][round(xindex)] == 1):
-                        boxheight = surface.get_height() * (1/distance(self.position, (xindex,yindex)))
-                        pygame.draw.rect(surface, (128,128,128), 
-                        pygame.Rect((i*surface.get_width())/self.rays, (surface.get_height()-boxheight)//2, boxwidth, boxheight))
+                    tile = world[round(yindex)][round(xindex)]
+                    if (tile > 0):
+                        scale = (1/distance(self.position, (xindex,yindex)))
+                        boxheight = h * scale
+                        
+                        color = colors[tile - 1]
+                        
+                        zbuffer.append((pygame.Rect((i*w)/self.rays, (h-boxheight)//2, boxwidth, boxheight), color, distance(self.position, (xindex,yindex))))
                         break
                 else:
                     break #abandon ray if it lies out of bounds
+            
+            #place sprites in zbuffer
+            for sprite in sprites:
+                spriteangle = math.degrees(math.atan2(sprite.position[1] - self.position[1],sprite.position[0] - self.position[0]))
+                viewlocation = (spriteangle + self.viewangle - 90 + self.fov/2) % 360
+                screenlocation = w - viewlocation * (w/self.fov)
+                dist = distance(self.position, sprite.position)
+               
+                zbuffer.append((pygame.Rect(screenlocation - (sprite.width * (1/dist)//2), (h - (sprite.height * 1/dist))//2, 
+                                            (sprite.width * 1/dist), (sprite.height * 1/dist)), (255,0,0), dist))
+                #print(spriteangle, viewlocation, screenlocation)
+            
+        zbuffer.sort(key = lambda x: x[2], reverse = True) #sort by distance
+        for rect in zbuffer:
+            pygame.draw.rect(surface, rect[1], rect[0])
     
 def main(argv):
     pygame.init()
@@ -86,6 +118,8 @@ def main(argv):
     consolas = pygame.font.SysFont("Consolas", 14)
     
     player = Player()
+    sprites = []
+    sprites.append(Sprite([1,1], 360, 100))
     
     run = True
     locked = True
@@ -119,9 +153,9 @@ def main(argv):
                             screen.get_width(), screen.get_height()//2))
         
         keys = pygame.key.get_pressed()
-        player.move(keys)
+        player.move(world, keys)
         
-        player.raycast(world, screen)
+        player.raycast(world, screen, colors, sprites)
         
         frames = consolas.render("{} fps".format(round(fps,1)),True,(255,255,255))
         angle = consolas.render("angle = {}".format(player.viewangle % 360),True,(255,255,255))
@@ -130,11 +164,18 @@ def main(argv):
         screen.blit(angle, (5, 20))
         screen.blit(pos, (5, 35))
         
+        #draw crosshair
+        chsize = 7
+        centerx = screen.get_width()//2
+        centery = screen.get_height()//2
+        pygame.draw.line(screen, (255, 255, 255), (centerx - chsize, centery), (centerx + chsize, centery), 1)
+        pygame.draw.line(screen, (255, 255, 255), (centerx, centery - chsize), (centerx, centery + chsize), 1)
+        
         #game code end here
         window.blit(pygame.transform.scale(screen, window.get_rect().size), (0, 0))
         pygame.display.flip()
         
-        clock.tick(240)
+        clock.tick(60)
         fps = int(1/(time.time() - startloop + 0.000001))
     
 
