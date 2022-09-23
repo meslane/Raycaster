@@ -10,7 +10,7 @@ world = [ #y,x
     [1,0,2,0,1,0,0,2],
     [2,0,0,0,2,0,0,1],
     [1,0,0,0,1,0,0,2],
-    [1,1,2,1,1,0,0,1],
+    [1,1,2,1,2,0,0,1],
     [1,0,0,0,0,0,0,2],
     [1,1,2,1,2,1,2,2]
 ]
@@ -21,28 +21,61 @@ colors = [(128, 128, 128),
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
-class Sprite():
+def linecollision(L1, L2):
+    x1 = L1[0][0]
+    x2 = L1[1][0]
+    y1 = L1[0][1]
+    y2 = L1[1][1]
+    
+    x3 = L2[0][0]
+    x4 = L2[1][0]
+    y3 = L2[0][1]
+    y4 = L2[1][1]
+    
+    uA = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3)) / ((y4-y3)*(x2-x1) - (x4-x3)*(y2-y1) + 0.0000001)
+    uB = ((x2-x1)*(y1-y3) - (y2-y1)*(x1-x3)) / ((y4-y3)*(x2-x1) - (x4-x3)*(y2-y1) + 0.0000001)
+
+    if (0 <= uA <= 1 and 0 <= uB <= 1):
+        x_intersect = x1 + (uA * (x2-x1))
+        y_intersect = y1 + (uA * (y2-y1))
+        
+        return (x_intersect, y_intersect)
+    else:
+        return (0,0)
+
+def squarecollision(L1, S):
+    sides = []
+    sides.append(linecollision(L1, ((S[0] + 0.5, S[1] + 0.5), (S[0] - 0.5, S[1] + 0.5))))
+    sides.append(linecollision(L1, ((S[0] - 0.5, S[1] + 0.5), (S[0] - 0.5, S[1] - 0.5))))
+    sides.append(linecollision(L1, ((S[0] - 0.5, S[1] - 0.5), (S[0] + 0.5, S[1] - 0.5))))
+    sides.append(linecollision(L1, ((S[0] + 0.5, S[1] - 0.5), (S[0] + 0.5, S[1] + 0.5))))
+    
+    sides = [i for i in sides if i != (0,0)]
+    
+    return sides
+
+class Sprite:
     def __init__(self, position, size, filename):
         self.position = position
         self.size = size
         self.height = size[1]
         self.width = size[0]
         self.image = pygame.image.load(filename).convert_alpha()
+        self.hp = 10
 
-class Player():
+class Player:
     def __init__(self):
         self.position = [5, 1]
         self.viewangle = 0 #0 to 360
         self.fov = 80
         self.rays = 180
-        self.draw_distance = 8
-        self.line_resolution = 25
+        self.draw_distance = 10
         
         self.speed = 0.02
         
         self.hp = 10
-        self.ammo_max = 30
-        self.ammo = 25
+        self.ammo_max = 15
+        self.ammo = 11
         
     def move(self, world, keys):
         dx = 0
@@ -80,35 +113,42 @@ class Player():
         boxwidth = w/self.rays + 1
         angle = self.fov/self.rays
         
+        tiles = []
         zbuffer = []
+        
+        #sort tiles
+        for y_index in range(len(world)):
+            for x_index in range(len(world[0])):
+                if world[y_index][x_index] != 0:
+                    tiles.append(((x_index,y_index), distance(self.position, (x_index,y_index)), world[y_index][x_index]))
+                    
+        tiles.sort(key = lambda x: x[1]) #sort from closest to furthest
+        
+        #cast rays
         for i in range(self.rays + 1):
             #generate ray angle vectors
             x = math.sin(math.radians(self.viewangle - (self.fov / 2) + (i * angle)))
             y = math.cos(math.radians(self.viewangle - (self.fov / 2) + (i * angle)))
             
-            #cast rays
-            for j in range(1,self.draw_distance * self.line_resolution):
-                yindex = self.position[1] + (j/self.line_resolution * y)
-                xindex = self.position[0] + (j/self.line_resolution * x)
-                
-                if (0 <= round(yindex) < len(world) and 0 <= round(xindex) < len(world[0])):
-                    tile = world[round(yindex)][round(xindex)]
-                    if (tile > 0):
-                        scale = 1/(distance(self.position, (xindex,yindex)) * math.cos(math.radians((i * angle) - self.fov/2))) #fisheye correction
-                        boxheight = h * scale
-                        
-                        color = colors[tile - 1]
-                        
-                        zbuffer.append((pygame.Rect((i*w)/self.rays, (h-boxheight)//2, boxwidth, boxheight), color, distance(self.position, (xindex,yindex)), 'rect'))
-                        break
-                else:
-                    break #abandon ray if it lies out of bounds
-            
+            for tile in tiles:
+                collisions = squarecollision((self.position, (self.position[0] + (x*self.draw_distance), self.position[1] + (y*self.draw_distance))), tile[0])
+                if collisions:
+                    collisions.sort(key = lambda x: distance(self.position, x))
+                    dist = distance(self.position, collisions[0])
+                    scale = 1/dist
+                    boxheight = h*scale
+                    
+                    color = colors[tile[2] - 1]
+                    
+                    zbuffer.append((pygame.Rect((i*w)/self.rays, (h-boxheight)//2, boxwidth, boxheight), color, dist, 'rect'))
+                    break #abandon ray since it has hit a closer tile
+        
         #place sprites in zbuffer
         for sprite in sprites:
             spriteangle = math.degrees(math.atan2(sprite.position[1] - self.position[1],sprite.position[0] - self.position[0]))
-            viewlocation = (spriteangle + self.viewangle - 90 + self.fov/2) % 360
-            screenlocation = w - viewlocation * (w/self.fov)
+            viewangle = (spriteangle + self.viewangle - 90 + self.fov/2) % 360
+            screenlocation = w - viewangle * (w/self.fov)
+            
             dist = distance(self.position, sprite.position)
             scale = 1/dist
             if scale > 10:
@@ -119,7 +159,8 @@ class Player():
                 dist, 'image',
                 (screenlocation - (sprite.width * (scale)//2), (h - (sprite.height * scale) + ((h - sprite.height - 2*sprite.position[2]) * scale))//2)))
             
-        zbuffer.sort(key = lambda x: x[2], reverse = True) #sort by distance
+        #sort by distance and draw
+        zbuffer.sort(key = lambda x: x[2], reverse = True)
         for rect in zbuffer:
             if rect[3] == 'rect':
                 pygame.draw.rect(surface, rect[1], rect[0])
@@ -180,7 +221,7 @@ def main(argv):
         player.move(world, keys)
         player.raycast(world, screen, colors, sprites)
         
-        sprites[0].position[0] += 0.01
+        #sprites[0].position[0] += 0.01
         
         frames = consolas.render("{} fps".format(round(fps,1)),True,(255,255,255))
         angle = consolas.render("angle = {}".format(player.viewangle % 360),True,(255,255,255))
@@ -195,10 +236,10 @@ def main(argv):
             screen.blit(heart, (616 - (i*16), 7))
         
         for i in range(player.ammo_max):
-            screen.blit(ammo, (614 - ((i%10)*16), 25 + 20 * (i // 10)))
+            screen.blit(ammo, (614 - ((i%10)*16), (25 + 20*((player.ammo_max - 1)//10)) - 20 * (i // 10)))
         
         for i in range(player.ammo):
-            screen.blit(bullet, (614 - ((i%10)*16), 25 + 20 * (i // 10)))
+            screen.blit(bullet, (614 - ((i%10)*16), (25 + 20*((player.ammo_max - 1)//10)) - 20 * (i // 10)))
         
         #draw crosshair
         chsize = 7
